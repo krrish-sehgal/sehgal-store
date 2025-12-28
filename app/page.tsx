@@ -445,6 +445,12 @@ export default function Home() {
             <Link href="/refund" className="hover:text-primary transition">
               Refund Policy
             </Link>
+            <Link href="/shipping" className="hover:text-primary transition">
+              Shipping Policy
+            </Link>
+            <Link href="/contact" className="hover:text-primary transition">
+              Contact Us
+            </Link>
           </div>
           <div className="text-center text-muted-foreground text-sm">
             <p>&copy; 2025 Sehgal Store. All rights reserved.</p>
