@@ -3,7 +3,8 @@
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Phone, MapPin, ShoppingCart, Trash2, CheckCircle } from "lucide-react"
+import { Input } from "@/components/ui/input"
+import { Phone, MapPin, ShoppingCart, Trash2, CheckCircle, IndianRupee } from "lucide-react"
 import Link from "next/link"
 import Image from "next/image"
 
@@ -55,6 +56,8 @@ export default function Home() {
   const [showCart, setShowCart] = useState(false)
   const [orderPlaced, setOrderPlaced] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
+  const [customAmount, setCustomAmount] = useState<string>("")
+  const [isProcessingCustom, setIsProcessingCustom] = useState(false)
 
   const addToCart = (product: (typeof PRODUCTS)[0]) => {
     const existingItem = cart.find((item) => item.id === product.id)
@@ -79,6 +82,117 @@ export default function Home() {
 
   const cartTotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0)
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0)
+
+  const handleCustomPayment = async () => {
+    const amount = parseFloat(customAmount)
+    
+    if (!customAmount || isNaN(amount) || amount < 1) {
+      alert("Please enter a valid amount (minimum ₹1)")
+      return
+    }
+
+    setIsProcessingCustom(true)
+    try {
+      const response = await fetch("/api/razorpay", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || "Failed to create order")
+      }
+
+      const data = await response.json()
+
+      if (!data.orderId) {
+        throw new Error("Invalid order response")
+      }
+
+      const configResponse = await fetch("/api/razorpay/config")
+      if (!configResponse.ok) {
+        throw new Error("Failed to fetch Razorpay configuration")
+      }
+
+      const configData = await configResponse.json()
+
+      // Load Razorpay script if not already loaded
+      const loadRazorpayScript = (): Promise<void> => {
+        return new Promise((resolve, reject) => {
+          if ((window as any).Razorpay) {
+            resolve()
+            return
+          }
+
+          const script = document.createElement("script")
+          script.src = "https://checkout.razorpay.com/v1/checkout.js"
+          script.async = true
+          script.onload = () => resolve()
+          script.onerror = () => reject(new Error("Failed to load Razorpay script"))
+          document.body.appendChild(script)
+        })
+      }
+
+      await loadRazorpayScript()
+
+      const options = {
+        key: configData.keyId,
+        amount: data.amount, // Use amount from backend (already in paise)
+        currency: "INR",
+        name: "Sehgal Store",
+        description: `Custom Payment of ₹${amount}`,
+        order_id: data.orderId,
+        handler: async (response: any) => {
+          try {
+            // Verify payment on server-side
+            const verifyResponse = await fetch("/api/razorpay/verify", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+              }),
+            })
+
+            const verifyData = await verifyResponse.json()
+
+            if (verifyData.verified) {
+              alert(`Payment successful! Payment ID: ${response.razorpay_payment_id}`)
+              setCustomAmount("")
+            } else {
+              alert("Payment verification failed. Please contact support.")
+              console.error("Payment verification failed:", verifyData)
+            }
+          } catch (error) {
+            console.error("Payment verification error:", error)
+            alert("Payment verification failed. Please contact support with payment ID: " + response.razorpay_payment_id)
+          }
+        },
+        prefill: {
+          contact: "9810675566",
+        },
+        theme: { color: "#1a3a3a" },
+        modal: {
+          ondismiss: () => {
+            setIsProcessingCustom(false)
+          },
+        },
+      }
+
+      const rzp1 = new (window as any).Razorpay(options)
+      rzp1.on("payment.failed", (response: any) => {
+        alert(`Payment failed: ${response.error.description || "Unknown error"}`)
+        setIsProcessingCustom(false)
+      })
+      rzp1.open()
+    } catch (error: any) {
+      console.error("Custom payment error:", error)
+      alert(error?.message || "Payment failed. Please try again.")
+      setIsProcessingCustom(false)
+    }
+  }
 
   const handleCheckout = async () => {
     if (cart.length === 0) {
@@ -294,6 +408,64 @@ export default function Home() {
                 <strong>Location:</strong> 23/26 East Patel Nagar, New Delhi-110008 |
                 <strong className="ml-2">Phone:</strong> 9810675566
               </p>
+            </CardContent>
+          </Card>
+        </section>
+
+        {/* Custom Payment Section */}
+        <section className="mb-12">
+          <Card className="border-primary/20 bg-gradient-to-br from-primary/5 to-primary/10">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <IndianRupee className="w-6 h-6 text-primary" />
+                Custom Payment
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-muted-foreground mb-4">
+                Pay any amount you want. Enter the amount below and proceed to payment.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-4">
+                <div className="flex-1">
+                  <label htmlFor="custom-amount" className="text-sm font-medium text-foreground mb-2 block">
+                    Enter Amount (₹)
+                  </label>
+                  <Input
+                    id="custom-amount"
+                    type="number"
+                    min="1"
+                    step="0.01"
+                    placeholder="Enter amount (e.g., 100)"
+                    value={customAmount}
+                    onChange={(e) => {
+                      const value = e.target.value
+                      // Allow only positive numbers
+                      if (value === "" || (!isNaN(parseFloat(value)) && parseFloat(value) >= 0)) {
+                        setCustomAmount(value)
+                      }
+                    }}
+                    className="text-lg"
+                  />
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Minimum amount: ₹1
+                  </p>
+                </div>
+                <div className="flex items-end">
+                  <Button
+                    onClick={handleCustomPayment}
+                    disabled={isProcessingCustom || !customAmount || parseFloat(customAmount) < 1}
+                    className="w-full sm:w-auto bg-primary hover:bg-primary/90 text-primary-foreground text-base font-semibold h-11 px-8"
+                  >
+                    {isProcessingCustom ? (
+                      "Processing..."
+                    ) : (
+                      <>
+                        Pay ₹{customAmount || "0"}
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
             </CardContent>
           </Card>
         </section>
